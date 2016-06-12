@@ -1,0 +1,195 @@
+<html>
+	<head>
+		<meta charset=utf-8>
+		<title>Ice World</title>
+		<style>
+			body { margin: 0; }
+			
+		</style>
+	</head>
+	<body>
+		<script src="js/three.js"></script>
+		<script id="romanVertexShader">
+			varying vec3 vectorNormal;
+			varying vec3 toLightVector;
+			varying float maxHeight;
+			varying vec3 pos;
+			varying vec3 finalPos;
+			varying float toCam;
+
+			uniform vec3 tide;
+			uniform vec3 light;
+			uniform vec3 cam;
+
+			float rand(vec3 co)
+			{
+    			return fract(sin(dot(co ,vec3(1.)))*54321.);
+			}
+			
+			void main()
+			{
+				toCam = length(position - cam);
+				pos = position;
+				vectorNormal = normalize(normal);
+				toLightVector = normalize(position - light);
+				vec3 tideN = normalize(position - tide);
+				float wave = 0.6 + 0.35 * sin(abs(tideN.y)*1.5) * sin(abs(tideN.z)*2.);
+
+				maxHeight = min(wave, 1.);
+				finalPos = position * max(rand(position),maxHeight);
+			    gl_Position = projectionMatrix * modelViewMatrix * vec4(finalPos, 1.);
+			}
+
+			
+		</script>
+
+		<script id="romanFragmentShader">
+			varying vec3 vectorNormal;
+			varying vec3 toLightVector;
+			varying float maxHeight;
+			varying vec3 pos;
+			varying vec3 finalPos;
+			varying float toCam;
+
+			uniform float time;
+			uniform bool useFog;
+			uniform float fogFactor;
+			uniform float lightning;
+
+			float fog()
+			{
+				float factor = fogFactor/1000.;
+				return 1.0 - exp(-toCam * factor);
+			}
+
+			void main()
+			{	
+				vec3 color = vec3(.0, 0., 1.);
+				vec3 fogColor = vec3(116.0/256., 63.0/256., 239.0/256.);
+				vec3 finalColor;
+
+				float mult = 1.;
+				float dotProduct = dot(vectorNormal,toLightVector);
+				float brightness = max(dotProduct, 0.01);
+
+				if (length(finalPos)> 47.5)
+					color = vec3(abs(cos(time)),sin(time * 3.),abs(sin(time * 8.)))/brightness;
+				else if (length(finalPos)> length(pos * maxHeight) + 0.01)
+				{
+					color = vec3(13.0/256., 148.0/256., 255.0/256.);
+					((toCam > lightning) && (toCam < lightning + 10.))? mult = 3. : mult = 1.;
+				}
+
+				(useFog)?finalColor = mix(brightness * color * mult, fogColor, fog()) : finalColor = brightness * color * mult;
+			    gl_FragColor = vec4(finalColor , 1.);
+			}
+		</script>
+
+
+		<script>
+			var scene, camera, renderer;
+			var h = window.innerHeight;
+			var w = window.innerWidth;
+			var aspect = w/h;
+			var start = Date.now();
+
+			/***CONTROL PANEL***/
+
+			var useShader = true;
+
+			var spikeCount =100;
+			var useFog = true;
+			var fogFlicker = false;
+			var fogFactor = 2;
+			var finalPoint = 200;
+			var rate = 0.001;
+			var lightOffSet = 0;
+			var waveSpeed = 5;
+			var sparkDelay = 7;
+			var lightningSpeed = 2;
+
+			/***!CONTROL PANEL!***/
+
+			camera = new THREE.PerspectiveCamera(7, aspect, 0.1, 5000);
+			camera.position.z = 2500;
+			camera.position.y = 0;
+
+			renderer = new THREE.WebGLRenderer();
+			renderer.setSize(w, h);
+
+			renderer.setClearColor(new THREE.Color(116.0/256., 63.0/256., 239.0/256.)); //0., 216.0/256., 255.0/256.
+			document.body.appendChild(renderer.domElement);
+
+			scene = new THREE.Scene();
+
+			var globeGeo = new THREE.SphereGeometry(50, spikeCount, spikeCount);
+			
+			var shader = new THREE.ShaderMaterial( 
+			{
+				vertexShader: document.getElementById('romanVertexShader').textContent,
+				fragmentShader: document.getElementById('romanFragmentShader').textContent,
+				uniforms:
+				{
+					light:{ type: "v3", value: new THREE.Vector3( 0, 0, 0 ) },
+					tide:{ type: "v3", value: new THREE.Vector3( 0, 0, 0 ) },
+					cam:{ type: "v3", value: new THREE.Vector3( 0, 0, 0 ) },
+					time:{type: 'float', value: 0.0},
+					useFog:{type: 'bool', value: useFog},
+					fogFactor:{type: 'float', value: fogFactor},
+					lightning:{type: 'float', value: lightning}
+				}
+			});
+			
+
+			var noTxtr = new THREE.MeshBasicMaterial( {color: 0xffffff, wireframe: true} );
+			var mesh = new THREE.Mesh(globeGeo,useShader?shader:noTxtr);
+			var t=1;
+			scene.add(mesh);
+			var lightning = 180.;
+			update();
+			function update()
+			{
+				
+				(lightning > sparkDelay * 100 + 250)?lightning = 180.0 : lightning+=lightningSpeed;
+				(camera.position.z > finalPoint)?camera.position.z -= 3*(((1+camera.position.z)/(finalPoint-1))-1)/4:null;
+				(camera.position.y < 38)?camera.position.y += (1-(1+camera.position.y)/40) * (finalPoint/camera.position.z)/5:null;
+				mesh.rotation.x += rate;
+				
+				if(fogFlicker)
+				{
+					t+=0.1;
+					if(Math.floor(t)%7 ==0)
+					{
+						shader.uniforms['useFog'].value = !shader.uniforms['useFog'].value;
+						t = 1;
+					}
+				}
+
+				var value = mesh.rotation.x - Math.PI/4;
+				
+				shader.uniforms['time'].value = 0.0001 * (Date.now() - start);
+				shader.uniforms['lightning'].value = lightning;
+				shader.uniforms['cam'].value = new THREE.Vector3(
+					0, 
+					camera.position.z * Math.sin(value),
+					camera.position.z * Math.cos(value)
+					);
+
+				shader.uniforms['tide'].value = new THREE.Vector3(
+					 0,
+					 55 * Math.cos(value*waveSpeed + Math.PI *.1),
+					 55 * Math.sin(value*waveSpeed + Math.PI *.1)
+					);
+
+				shader.uniforms['light'].value = new THREE.Vector3(
+					 0,//100 * Math.sin(value * 3.),
+					 600 * Math.sin(value - lightOffSet),
+					 600 * Math.cos(value - lightOffSet)
+					);
+
+				requestAnimationFrame( update );
+				renderer.render( scene, camera );
+			}
+		</script>
+	</body>
+</html>
